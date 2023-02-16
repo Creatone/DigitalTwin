@@ -38,6 +38,7 @@ FLINK_SQL_GATEWAY = os.getenv("IFF_FLINK_SQL_GATEWAY",
 DEFAULT_SAVEPOINT_DIR = "/flink-savepoints"
 FLINK_SAVEPOINT_DIR = os.getenv("IFF_FLINK_SAVEPOINT_DIR",
                                 default=DEFAULT_SAVEPOINT_DIR)
+DEFAULT_TIMEOUT = 60
 
 timer_interval_seconds = int(os.getenv("TIMER_INTERVAL", default="10"))
 timer_backoff_seconds = int(os.getenv("TIMER_BACKOFF_INTERVAL", default="10"))
@@ -117,6 +118,9 @@ def delete(body, spec, patch, logger, **kwargs):
     namespace = body["metadata"].get("namespace")
 
     state = body['status'].get(STATE)
+    if state == States.FINISHED.name:
+        # DELETE finished jobs right away
+        return
     job_id = body['status'].get(JOB_ID)
     if job_id and state not in [States.CANCELED.name, States.CANCELING.name]:
         try:
@@ -291,7 +295,9 @@ def monitor(beamsqltables: kopf.Index, beamsqlviews: kopf.Index, patch, logger,
     except (KeyError, TypeError):
         create(body, spec, patch, logger, **kwargs)
         return
-
+    if state == States.FINISHED.name:
+        # Don't worry about FINISHED jobs
+        return
     logger.debug(
         f"Triggered monitor for {namespace}/{metadata_name}"
         f" with state {state}")
@@ -487,6 +493,7 @@ def deploy_statementset(statementset, logger):
     logger.debug(f"Deployment request to SQL Gateway {request}")
     try:
         response = requests.post(request,
+                                 timeout=DEFAULT_TIMEOUT,
                                  json={"statement": statementset})
     except requests.RequestException as err:
         raise DeploymentFailedException(
